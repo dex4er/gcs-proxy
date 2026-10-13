@@ -28,8 +28,10 @@ jobs:
 
       - name: Increment semver
         id: semver
+        # Before the first tag, the version is counted from 0.0.0.
         run: |
-          echo "version=$(npx semver -i "$newversion" $(git describe --tags --abbrev=0))" >> $GITHUB_OUTPUT
+          current=$(git describe --tags --abbrev=0 2>/dev/null || echo 0.0.0)
+          echo "version=$(npx semver -i "$newversion" "$current")" >> $GITHUB_OUTPUT
         env:
           newversion: ${{ github.event.inputs.newversion }}
 
