@@ -44,7 +44,7 @@ func TestEmulator(t *testing.T) {
 	head := request(t, server.URL, http.MethodHead, path, nil)
 	etag, lastModified := head.Header.Get("ETag"), head.Header.Get("Last-Modified")
 	if etag == "" || lastModified == "" {
-		t.Fatalf("HEAD returned no validators: ETag %q, Last-Modified %q", etag, lastModified)
+		t.Fatalf("HEAD returned %d with no validators: ETag %q, Last-Modified %q", head.StatusCode, etag, lastModified)
 	}
 
 	// fake-gcs-server ignores the conditional headers, so the cases that

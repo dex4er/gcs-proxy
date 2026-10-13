@@ -233,7 +233,7 @@ set. The Test workflow runs it against fake-gcs-server; locally:
 
 ```bash
 docker run -d --rm --name fake-gcs-server -p 4443:4443 \
-  fsouza/fake-gcs-server:1.56.1 -scheme http -backend memory
+  fsouza/fake-gcs-server:1.56.1 -scheme http -backend memory -public-host localhost:4443
 curl -X POST -H "Content-Type: application/json" -d '{"name":"test-bucket"}' \
   "http://localhost:4443/storage/v1/b?project=test"
 GCSPROXY_TEST_ENDPOINT=http://localhost:4443 mise exec -- go test -v ./...
@@ -249,6 +249,9 @@ What fake-gcs-server (1.56.1) does and does not do, as measured:
 - It does not accept XML API uploads (`PUT` answers `invalid uploadType`),
   so the test uploads through the JSON API, and the CI step creates the
   bucket through it too.
+- It serves XML API reads only for the host given by `-public-host`
+  (`storage.googleapis.com` by default) and answers `404` for any other, so
+  `-public-host` has to match the host and port of the test endpoint.
 - It serves HTTPS with a self-signed certificate by default, hence
   `-scheme http`. A GitHub Actions service container cannot pass flags,
   which is why the Test workflow starts it from a step.

@@ -59,13 +59,15 @@ jobs:
 
       # fake-gcs-server serves the GCS API for TestEmulator in emulator_test.go.
       # It runs from a step rather than as a service container, because it
-      # needs flags to serve plain HTTP, which a service cannot pass. The
-      # bucket is created through the JSON API, as uploads are, so the curl
-      # loop also waits for the server to come up.
+      # needs flags, which a service cannot pass: -scheme http for plain HTTP,
+      # and -public-host for XML API reads on localhost, which it otherwise
+      # answers with 404. The bucket is created through the JSON API, as
+      # uploads are, so the curl loop also waits for the server to come up.
       - name: Start fake-gcs-server
         run: |
           docker run -d --name fake-gcs-server -p 4443:4443 \
-            "fsouza/fake-gcs-server:$FAKE_GCS_SERVER_VERSION" -scheme http -backend memory
+            "fsouza/fake-gcs-server:$FAKE_GCS_SERVER_VERSION" -scheme http -backend memory \
+            -public-host localhost:4443
           for _ in $(seq 1 60); do
             curl -sf -o /dev/null -X POST -H "Content-Type: application/json" \
               -d '{"name":"test-bucket"}' "http://localhost:4443/storage/v1/b?project=test" && exit 0

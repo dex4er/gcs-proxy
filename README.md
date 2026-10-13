@@ -174,7 +174,7 @@ make test
 
 # Run the tests against fake-gcs-server too
 docker run -d --rm --name fake-gcs-server -p 4443:4443 \
-  fsouza/fake-gcs-server:1.56.1 -scheme http -backend memory
+  fsouza/fake-gcs-server:1.56.1 -scheme http -backend memory -public-host localhost:4443
 curl -X POST -H "Content-Type: application/json" -d '{"name":"test-bucket"}' \
   "http://localhost:4443/storage/v1/b?project=test"
 GCSPROXY_TEST_ENDPOINT=http://localhost:4443 make test
