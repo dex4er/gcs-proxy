@@ -52,9 +52,9 @@ or when its output is piped it reports through the exit status alone. Use
 `--format json` when a script needs the details.
 
 The current vulnerability reports are in
-[Security scan for main branch](https://github.com/dex4er/gcs-proxy/discussions/2)
+[Security scan for main branch](https://github.com/dex4er/gcs-proxy/discussions/3)
 and
-[Security scan for the last release](https://github.com/dex4er/gcs-proxy/discussions/1).
+[Security scan for the last release](https://github.com/dex4er/gcs-proxy/discussions/4).
 
 ## Usage
 

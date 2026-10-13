@@ -44,7 +44,7 @@ jobs:
       # The hint strips the "v" from the release tag, so the value stays bare and
       # the prefix the Grype installer needs is added where it is used.
       GRYPE_VERSION: 0.120.1 # datasource=github-releases depName=anchore/grype
-      DISCUSSION_NUMBER: 1
+      DISCUSSION_NUMBER: 4
 
     steps:
       - name: Checkout

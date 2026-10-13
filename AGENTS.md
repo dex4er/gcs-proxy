@@ -345,8 +345,8 @@ The project uses:
 | `trunk-upgrade.yaml`      | Daily `trunk upgrade` pull request                                  |
 
 The scan reports replace the body of
-[discussion #2](https://github.com/dex4er/gcs-proxy/discussions/2) (main)
-and [discussion #1](https://github.com/dex4er/gcs-proxy/discussions/1) (last
+[discussion #3](https://github.com/dex4er/gcs-proxy/discussions/3) (main)
+and [discussion #4](https://github.com/dex4er/gcs-proxy/discussions/4) (last
 release); the numbers are the `DISCUSSION_NUMBER` env of each workflow.
 
 All jobs run on `ubuntu-26.04-arm`.

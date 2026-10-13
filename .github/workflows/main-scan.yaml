@@ -189,7 +189,7 @@ jobs:
       discussions: write
 
     env:
-      DISCUSSION_NUMBER: 2
+      DISCUSSION_NUMBER: 3
 
     steps:
       # Only needed for mise.toml and mise.lock: this job builds the table
