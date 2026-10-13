@@ -33,10 +33,10 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
 
     runs-on: ubuntu-26.04-arm
+    environment: automated
 
     permissions:
       contents: read
-      discussions: write
 
     env:
       # Renovate keeps this version up to date via the inline datasource hint
@@ -191,9 +191,12 @@ jobs:
           } > body.md
           echo "vulnerabilities: $count"
 
-      # gh discussion edit fails on a discussion that does not exist.
+      # gh discussion edit fails on a discussion that does not exist. GITHUB_TOKEN
+      # gets "Resource not accessible by integration" from updateDiscussion in
+      # this repository despite discussions: write, so the GH_TOKEN of the
+      # automated environment updates the discussion instead.
       - name: Update discussion
         run: |
           gh discussion edit "$DISCUSSION_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file body.md
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}

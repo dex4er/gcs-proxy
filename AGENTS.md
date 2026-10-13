@@ -348,6 +348,11 @@ The scan reports replace the body of
 [discussion #3](https://github.com/dex4er/gcs-proxy/discussions/3) (main)
 and [discussion #4](https://github.com/dex4er/gcs-proxy/discussions/4) (last
 release); the numbers are the `DISCUSSION_NUMBER` env of each workflow.
+The jobs update them with the `GH_TOKEN` of the `automated` environment, not
+with `GITHUB_TOKEN`: in this repository `updateDiscussion` answers
+`GITHUB_TOKEN` with "Resource not accessible by integration" despite
+`discussions: write`, while the same workflow works in s3-proxy. It is a
+classic token with the `repo` scope, which covers discussions.
 
 All jobs run on `ubuntu-26.04-arm`.
 
