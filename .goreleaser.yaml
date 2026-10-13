@@ -1,0 +1,119 @@
+version: 2
+
+project_name: gcs-proxy
+
+force_token: github
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - binary: gcs-proxy
+    env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm64
+    goos:
+      - darwin
+      - linux
+      - windows
+    flags:
+      - -trimpath
+
+archives:
+  - name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+dockers:
+  - image_templates:
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+    use: buildx
+    build_flag_templates:
+      - --pull
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.version=v{{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .Commit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+    dockerfile: Dockerfile-goreleaser
+    extra_files:
+      - LICENSE
+      - README.md
+  - image_templates:
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+    use: buildx
+    build_flag_templates:
+      - --pull
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.version=v{{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .Commit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+    goarch: arm64
+    dockerfile: Dockerfile-goreleaser
+    extra_files:
+      - LICENSE
+      - README.md
+
+docker_manifests:
+  - name_template: "docker.io/dex4er/gcs-proxy:v{{ .Version }}"
+    image_templates:
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}"
+    image_templates:
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: "docker.io/dex4er/gcs-proxy:v{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: "public.ecr.aws/dex4er/gcs-proxy:v{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: "docker.io/dex4er/gcs-proxy:v{{ .Major }}"
+    image_templates:
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: "public.ecr.aws/dex4er/gcs-proxy:v{{ .Major }}"
+    image_templates:
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: docker.io/dex4er/gcs-proxy:latest
+    image_templates:
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "docker.io/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+  - name_template: public.ecr.aws/dex4er/gcs-proxy:latest
+    image_templates:
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-amd64"
+      - "public.ecr.aws/dex4er/gcs-proxy:v{{ .Version }}-linux-arm64"
+
+checksum:
+  # SBOM artifacts have no Os/Arch, so the plain ProjectName-Os-Arch template
+  # would give all of them the same name ("gcs-proxy--.sha256") and they would
+  # overwrite each other. Fall back to the artifact name for those; the
+  # binaries keep the names they have always had.
+  name_template: "{{ if .Os }}{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{ else }}{{ .ArtifactName }}{{ end }}.sha256"
+  algorithm: sha256
+  split: true
+
+sboms:
+  # "archive" would match nothing: with formats [binary] there is no
+  # UploadableArchive artifact and GoReleaser would silently log "no artifacts
+  # matching current filters". The args are spelled out because the default
+  # ones add "--enrich all", which makes syft query external registries during
+  # the release.
+  - artifacts: binary
+    documents:
+      - "{{ .ArtifactName }}.sbom.json"
+    args:
+      - $artifact
+      - --output
+      - spdx-json=$document
+
+changelog:
+  use: github

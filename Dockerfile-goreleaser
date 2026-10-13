@@ -1,0 +1,26 @@
+# The CA bundle is the same file on every architecture, so this stage runs on
+# the build platform. The final stage only copies files, so no step of the
+# build needs emulation, whatever the target platform is.
+FROM --platform=$BUILDPLATFORM alpine:3.24.2 AS certs
+
+RUN apk --no-cache add ca-certificates
+
+
+FROM scratch
+
+WORKDIR /
+
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY ./gcs-proxy /gcs-proxy
+COPY ./LICENSE /README.md /
+
+ENTRYPOINT ["/gcs-proxy"]
+
+LABEL \
+  maintainer="Piotr Roszatycki <piotr.roszatycki@gmail.com>" \
+  org.opencontainers.image.description="GCS proxy" \
+  org.opencontainers.image.licenses="MIT" \
+  org.opencontainers.image.source=https://github.com/dex4er/gcs-proxy \
+  org.opencontainers.image.title=gcs-proxy \
+  org.opencontainers.image.url=https://github.com/dex4er/gcs-proxy \
+  org.opencontainers.image.vendor=dex4er

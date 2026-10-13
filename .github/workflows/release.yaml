@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch: {}
+
+permissions:
+  attestations: write
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+
+    runs-on: ubuntu-26.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Git tags
+        run: git fetch --force --tags
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # GoReleaser and yq come from mise so that their versions have a single
+      # source (mise.toml) and the downloads are verified against mise.lock.
+      - name: Set up mise
+        uses: jdx/mise-action@v5
+        with:
+          version: 2026.10.8 # datasource=github-releases depName=jdx/mise
+          install_args: goreleaser yq
+
+      # Required by the sboms section of .goreleaser.yaml.
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Login to DockerHub
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Configure AWS credentials
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+
+      - name: Login to Amazon ECR Public
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Run GoReleaser
+        run: goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect attestation subjects
+        run: |
+          set -eo pipefail
+          # checksum.split gives one .sha256 per artifact, each holding a bare
+          # digest, so there is no combined checksums file to attest. Rebuild
+          # one from the GoReleaser metadata instead: the uploadable binaries
+          # (the only Binary artifacts with extra.Format) and the SBOMs, named
+          # exactly as they are published, which is what users pass to
+          # `gh attestation verify`.
+          yq -pj -oy '
+            .[]
+            | select(.type == "SBOM" or (.type == "Binary" and .extra.Format == "binary"))
+            | (.extra.Checksum | sub("^sha256:"; "")) + "  " + .name
+          ' dist/artifacts.json > attestation-checksums.txt
+          cat attestation-checksums.txt
+          test -s attestation-checksums.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: attestation-checksums.txt

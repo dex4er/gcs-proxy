@@ -1,0 +1,83 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - .editorconfig
+      - .gitignore
+      - .markdownlint.yaml
+      - .claude/**
+      - .trunk/**
+      - AGENTS.md
+      - CLAUDE.md
+      - LICENSE
+      - README.md
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+
+    runs-on: ubuntu-26.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Git tags
+        run: git fetch --force --tags
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # GoReleaser comes from mise so that its version has a single source
+      # (mise.toml) and the download is verified against mise.lock.
+      - name: Set up mise
+        uses: jdx/mise-action@v5
+        with:
+          version: 2026.10.8 # datasource=github-releases depName=jdx/mise
+          install_args: goreleaser
+
+      - name: Run GoReleaser
+        run: goreleaser build --clean --snapshot --single-target --output gcs-proxy
+
+      - name: Test the output
+        run: |
+          ./gcs-proxy --version 2>&1 | grep "gcs-proxy version"
+
+      # fake-gcs-server serves the GCS API for TestEmulator in emulator_test.go.
+      # It runs from a step rather than as a service container, because it
+      # needs flags to serve plain HTTP, which a service cannot pass. The
+      # bucket is created through the JSON API, as uploads are, so the curl
+      # loop also waits for the server to come up.
+      - name: Start fake-gcs-server
+        run: |
+          docker run -d --name fake-gcs-server -p 4443:4443 \
+            "fsouza/fake-gcs-server:$FAKE_GCS_SERVER_VERSION" -scheme http -backend memory
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null -X POST -H "Content-Type: application/json" \
+              -d '{"name":"test-bucket"}' "http://localhost:4443/storage/v1/b?project=test" && exit 0
+            sleep 1
+          done
+          echo "::error::fake-gcs-server did not start"
+          docker logs fake-gcs-server
+          exit 1
+        env:
+          FAKE_GCS_SERVER_VERSION: 1.56.1 # datasource=docker depName=fsouza/fake-gcs-server
+
+      - name: Run Go tests
+        run: go test -v ./...
+        env:
+          GCSPROXY_TEST_ENDPOINT: http://localhost:4443
