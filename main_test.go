@@ -234,6 +234,59 @@ func TestEmptyKey(t *testing.T) {
 	}
 }
 
+func useIndex(t *testing.T, document string, spaMode bool) {
+	t.Helper()
+	savedDocument, savedSPA := indexDocument, spa
+	indexDocument, spa = document, spaMode
+	t.Cleanup(func() {
+		indexDocument, spa = savedDocument, savedSPA
+	})
+}
+
+func TestIndexObject(t *testing.T) {
+	for _, tc := range []struct {
+		document string
+		spa      bool
+		path     string
+		want     string
+	}{
+		{"", false, "docs/", "docs/"},
+		{"", false, "", ""},
+		{"index.html", false, "", "index.html"},
+		{"index.html", false, "docs/", "docs/index.html"},
+		{"index.html", false, "about", "about"},
+		{"index.html", false, "app.js", "app.js"},
+		{"index.html", true, "", "index.html"},
+		{"index.html", true, "docs/", "index.html"},
+		{"index.html", true, "about", "index.html"},
+		{"index.html", true, "a/b", "index.html"},
+		{"index.html", true, "v1.2/about", "index.html"},
+		{"index.html", true, "app.js", "app.js"},
+		{"index.html", true, "assets/main.js", "assets/main.js"},
+	} {
+		useIndex(t, tc.document, tc.spa)
+		if got := indexObject(tc.path); got != tc.want {
+			t.Errorf("indexObject(%q) with %q, spa %v = %q, want %q", tc.path, tc.document, tc.spa, got, tc.want)
+		}
+	}
+}
+
+func TestIndexDocument(t *testing.T) {
+	f := &fakeGCS{handler: object}
+	useFake(t, f)
+	useIndex(t, "index.html", false)
+
+	serve(http.MethodGet, "/", nil)
+	serve(http.MethodHead, "/docs/", nil)
+
+	if gets := f.sent(http.MethodGet); len(gets) != 1 || gets[0].URL.Path != "/test-bucket/index.html" {
+		t.Errorf("unexpected GET requests: %+v", gets)
+	}
+	if heads := f.sent(http.MethodHead); len(heads) != 1 || heads[0].URL.Path != "/test-bucket/docs/index.html" {
+		t.Errorf("unexpected HEAD requests: %+v", heads)
+	}
+}
+
 func TestPreconditionsSentToGCS(t *testing.T) {
 	date := "Tue, 13 Oct 2026 12:00:00 GMT"
 	tests := []struct {
@@ -402,5 +455,90 @@ func TestIfRange(t *testing.T) {
 				t.Errorf("second GET still has Range %q", gets[1].Header.Get("Range"))
 			}
 		})
+	}
+}
+
+func useErrorDocument(t *testing.T, document string) {
+	t.Helper()
+	saved := errorDocument
+	errorDocument = document
+	t.Cleanup(func() {
+		errorDocument = saved
+	})
+}
+
+// withErrorDocument answers for 404.html and leaves every other object
+// missing.
+func withErrorDocument(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/test-bucket/404.html" {
+		gcsErrorHandler(http.StatusNotFound, "NoSuchKey")(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("ETag", testETag)
+	http.ServeContent(w, r, "", testLastModified, strings.NewReader("not here"))
+}
+
+func TestErrorDocument(t *testing.T) {
+	f := &fakeGCS{handler: withErrorDocument}
+	useFake(t, f)
+	useErrorDocument(t, "404.html")
+
+	w := serve(http.MethodGet, "/missing.html", map[string]string{"Range": "bytes=0-1", "If-None-Match": testETag})
+
+	assertResponse(t, w, http.StatusNotFound, "not here", map[string]string{
+		"Content-Type":   "text/html",
+		"Content-Length": "8",
+		"Cache-Control":  "",
+		"ETag":           "",
+	})
+	gets := f.sent(http.MethodGet)
+	if len(gets) != 2 || gets[1].URL.Path != "/test-bucket/404.html" || gets[1].Header.Get("Range") != "" || gets[1].Header.Get("If-None-Match") != "" {
+		t.Errorf("unexpected GET requests: %+v", gets)
+	}
+
+	w = serve(http.MethodHead, "/missing.html", nil)
+
+	assertResponse(t, w, http.StatusNotFound, "", map[string]string{"Content-Type": "text/html", "Content-Length": "8"})
+}
+
+func TestErrorDocumentMissing(t *testing.T) {
+	f := &fakeGCS{handler: gcsErrorHandler(http.StatusNotFound, "NoSuchKey")}
+	useFake(t, f)
+	useErrorDocument(t, "404.html")
+
+	w := serve(http.MethodGet, "/missing.html", nil)
+	assertResponse(t, w, http.StatusNotFound, "The requested resource was not found\n", nil)
+
+	w = serve(http.MethodGet, "/404.html", nil)
+	assertResponse(t, w, http.StatusNotFound, "The requested resource was not found\n", nil)
+
+	if gets := f.sent(http.MethodGet); len(gets) != 3 {
+		t.Errorf("GET requests = %d, want 3", len(gets))
+	}
+}
+
+func TestErrorDocumentNotForOtherErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+		want   int
+	}{
+		{http.StatusNotFound, "NoSuchBucket", http.StatusNotFound},
+		{http.StatusForbidden, "AccessDenied", http.StatusForbidden},
+	} {
+		f := &fakeGCS{handler: gcsErrorHandler(tc.status, tc.code)}
+		useFake(t, f)
+		useErrorDocument(t, "404.html")
+
+		w := serve(http.MethodGet, "/missing.html", nil)
+
+		if w.Code != tc.want {
+			t.Errorf("%s: status = %d, want %d", tc.code, w.Code, tc.want)
+		}
+		if gets := f.sent(http.MethodGet); len(gets) != 1 {
+			t.Errorf("%s: GET requests = %d, want 1", tc.code, len(gets))
+		}
 	}
 }

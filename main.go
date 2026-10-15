@@ -26,13 +26,16 @@ var version = "dev"
 const readOnlyScope = "https://www.googleapis.com/auth/devstorage.read_only"
 
 var (
-	bucketName string
-	port       string
-	logLevel   string
-	endpoint   string
-	anonymous  bool
-	httpClient *http.Client
-	logger     *slog.Logger
+	bucketName    string
+	port          string
+	logLevel      string
+	endpoint      string
+	anonymous     bool
+	indexDocument string
+	errorDocument string
+	spa           bool
+	httpClient    *http.Client
+	logger        *slog.Logger
 )
 
 var rootCmd = &cobra.Command{
@@ -53,6 +56,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "loglevel", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&endpoint, "endpoint", "https://storage.googleapis.com", "GCS XML API endpoint URL")
 	rootCmd.PersistentFlags().BoolVar(&anonymous, "anonymous", false, "Send requests without credentials, for public buckets and emulators")
+	rootCmd.PersistentFlags().StringVar(&indexDocument, "index-document", "", "Object served for a path ending in a slash, for example index.html")
+	rootCmd.PersistentFlags().BoolVar(&spa, "spa", false, "Serve the index document of the bucket root for every path whose last segment has no dot")
+	rootCmd.PersistentFlags().StringVar(&errorDocument, "error-document", "", "Object served with 404 for a missing object, for example 404.html")
 
 	if err := viper.BindPFlag("bucket", rootCmd.PersistentFlags().Lookup("bucket")); err != nil {
 		panic(err)
@@ -67,6 +73,15 @@ func init() {
 		panic(err)
 	}
 	if err := viper.BindPFlag("anonymous", rootCmd.PersistentFlags().Lookup("anonymous")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("index-document", rootCmd.PersistentFlags().Lookup("index-document")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("spa", rootCmd.PersistentFlags().Lookup("spa")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("error-document", rootCmd.PersistentFlags().Lookup("error-document")); err != nil {
 		panic(err)
 	}
 }
@@ -84,6 +99,9 @@ func runServer() error {
 	logLevel = viper.GetString("loglevel")
 	endpoint = viper.GetString("endpoint")
 	anonymous = viper.GetBool("anonymous")
+	indexDocument = strings.TrimPrefix(viper.GetString("index-document"), "/")
+	spa = viper.GetBool("spa")
+	errorDocument = strings.TrimPrefix(viper.GetString("error-document"), "/")
 
 	// Initialize logger
 	var level slog.Level
@@ -108,6 +126,9 @@ func runServer() error {
 	if bucketName == "" {
 		return fmt.Errorf("bucket name is required")
 	}
+	if spa && indexDocument == "" {
+		return fmt.Errorf("--spa requires --index-document")
+	}
 
 	// Initialize the HTTP client, with Application Default Credentials
 	// unless the requests go out anonymously.
@@ -130,6 +151,9 @@ func runServer() error {
 		"bucket", bucketName,
 		"endpoint", endpoint,
 		"anonymous", anonymous,
+		"index_document", indexDocument,
+		"spa", spa,
+		"error_document", errorDocument,
 		"loglevel", logLevel)
 	return http.ListenAndServe(addr, nil)
 }
@@ -181,11 +205,11 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the object path from the request URL
-	objectKey := strings.TrimPrefix(r.URL.Path, "/")
+	objectKey := indexObject(strings.TrimPrefix(r.URL.Path, "/"))
 
 	// If path is empty, return error
 	if objectKey == "" {
-		http.Error(w, "The requested resource was not found", http.StatusNotFound)
+		notFound(w, r)
 		return
 	}
 
@@ -196,10 +220,28 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	getObject(w, r, objectKey)
 }
 
+// indexObject returns the object a request path is served from. With an index
+// document, a path ending in a slash gets the document appended, the way a
+// GCS website does. With --spa, a path whose last segment has no dot is a
+// client-side route rather than a file, and gets the index document of the
+// bucket root instead.
+func indexObject(objectKey string) string {
+	if indexDocument == "" {
+		return objectKey
+	}
+	if spa && !strings.Contains(objectKey[strings.LastIndex(objectKey, "/")+1:], ".") {
+		return indexDocument
+	}
+	if objectKey == "" || strings.HasSuffix(objectKey, "/") {
+		return objectKey + indexDocument
+	}
+	return objectKey
+}
+
 func headObject(w http.ResponseWriter, r *http.Request, objectKey string) {
 	resp, err := gcsRequest(r.Context(), http.MethodHead, objectKey, requestPreconditions(r))
 	if err != nil {
-		handleGCSError(w, err)
+		handleObjectError(w, r, objectKey, err)
 		return
 	}
 	defer closeBody(resp.Body)
@@ -232,7 +274,7 @@ func getObject(w http.ResponseWriter, r *http.Request, objectKey string) {
 			rangeNotSatisfiable(w, r, objectKey, header, ifRange)
 			return
 		}
-		handleGCSError(w, err)
+		handleObjectError(w, r, objectKey, err)
 		return
 	}
 
@@ -248,7 +290,7 @@ func rangeNotSatisfiable(w http.ResponseWriter, r *http.Request, objectKey strin
 	header.Del("Range")
 	head, err := gcsRequest(r.Context(), http.MethodHead, objectKey, header)
 	if err != nil {
-		handleGCSError(w, err)
+		handleObjectError(w, r, objectKey, err)
 		return
 	}
 	closeBody(head.Body)
@@ -256,7 +298,7 @@ func rangeNotSatisfiable(w http.ResponseWriter, r *http.Request, objectKey strin
 	if ifRange != "" && !ifRangeMatches(ifRange, head.Header) {
 		resp, err := gcsRequest(r.Context(), http.MethodGet, objectKey, header)
 		if err != nil {
-			handleGCSError(w, err)
+			handleObjectError(w, r, objectKey, err)
 			return
 		}
 		writeObject(w, resp)
@@ -438,6 +480,48 @@ func ifRangeMatches(ifRange string, object http.Header) bool {
 	}
 	lastModified, err := http.ParseTime(object.Get("Last-Modified"))
 	return err == nil && lastModified.Equal(t)
+}
+
+// handleObjectError answers a GCS error for the object. A missing object gets
+// the error document, when there is one and it is not the missing object
+// itself.
+func handleObjectError(w http.ResponseWriter, r *http.Request, objectKey string, err error) {
+	if errorDocument != "" && objectKey != errorDocument && isNoSuchKey(err) {
+		notFound(w, r)
+		return
+	}
+	handleGCSError(w, err)
+}
+
+// notFound answers 404, with the error document as the body when there is
+// one. Only its type and length go to the client: its validators and
+// caching headers describe the document, not the missing object.
+func notFound(w http.ResponseWriter, r *http.Request) {
+	if errorDocument != "" {
+		resp, err := gcsRequest(r.Context(), r.Method, errorDocument, http.Header{})
+		if err == nil {
+			defer closeBody(resp.Body)
+			for _, name := range []string{"Content-Type", "Content-Length"} {
+				if v := resp.Header.Get(name); v != "" {
+					w.Header().Set(name, v)
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				logger.Error("Error writing response", "error", err)
+			}
+			return
+		}
+		logger.Error("Error document not available", "error", err)
+	}
+	http.Error(w, "The requested resource was not found", http.StatusNotFound)
+}
+
+// isNoSuchKey tells a missing object from a missing bucket, which has a code
+// of its own. A HEAD error has no code at all.
+func isNoSuchKey(err error) bool {
+	var ge *gcsError
+	return errors.As(err, &ge) && (ge.code == "NoSuchKey" || ge.status == http.StatusNotFound && ge.code == "")
 }
 
 func isInvalidRange(err error) bool {
