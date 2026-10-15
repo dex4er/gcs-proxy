@@ -26,13 +26,15 @@ var version = "dev"
 const readOnlyScope = "https://www.googleapis.com/auth/devstorage.read_only"
 
 var (
-	bucketName string
-	port       string
-	logLevel   string
-	endpoint   string
-	anonymous  bool
-	httpClient *http.Client
-	logger     *slog.Logger
+	bucketName    string
+	port          string
+	logLevel      string
+	endpoint      string
+	anonymous     bool
+	indexDocument string
+	spa           bool
+	httpClient    *http.Client
+	logger        *slog.Logger
 )
 
 var rootCmd = &cobra.Command{
@@ -53,6 +55,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "loglevel", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&endpoint, "endpoint", "https://storage.googleapis.com", "GCS XML API endpoint URL")
 	rootCmd.PersistentFlags().BoolVar(&anonymous, "anonymous", false, "Send requests without credentials, for public buckets and emulators")
+	rootCmd.PersistentFlags().StringVar(&indexDocument, "index-document", "", "Object served for a path ending in a slash, for example index.html")
+	rootCmd.PersistentFlags().BoolVar(&spa, "spa", false, "Serve the index document of the bucket root for every path whose last segment has no dot")
 
 	if err := viper.BindPFlag("bucket", rootCmd.PersistentFlags().Lookup("bucket")); err != nil {
 		panic(err)
@@ -67,6 +71,12 @@ func init() {
 		panic(err)
 	}
 	if err := viper.BindPFlag("anonymous", rootCmd.PersistentFlags().Lookup("anonymous")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("index-document", rootCmd.PersistentFlags().Lookup("index-document")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("spa", rootCmd.PersistentFlags().Lookup("spa")); err != nil {
 		panic(err)
 	}
 }
@@ -84,6 +94,8 @@ func runServer() error {
 	logLevel = viper.GetString("loglevel")
 	endpoint = viper.GetString("endpoint")
 	anonymous = viper.GetBool("anonymous")
+	indexDocument = strings.TrimPrefix(viper.GetString("index-document"), "/")
+	spa = viper.GetBool("spa")
 
 	// Initialize logger
 	var level slog.Level
@@ -108,6 +120,9 @@ func runServer() error {
 	if bucketName == "" {
 		return fmt.Errorf("bucket name is required")
 	}
+	if spa && indexDocument == "" {
+		return fmt.Errorf("--spa requires --index-document")
+	}
 
 	// Initialize the HTTP client, with Application Default Credentials
 	// unless the requests go out anonymously.
@@ -130,6 +145,8 @@ func runServer() error {
 		"bucket", bucketName,
 		"endpoint", endpoint,
 		"anonymous", anonymous,
+		"index_document", indexDocument,
+		"spa", spa,
 		"loglevel", logLevel)
 	return http.ListenAndServe(addr, nil)
 }
@@ -181,7 +198,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the object path from the request URL
-	objectKey := strings.TrimPrefix(r.URL.Path, "/")
+	objectKey := indexObject(strings.TrimPrefix(r.URL.Path, "/"))
 
 	// If path is empty, return error
 	if objectKey == "" {
@@ -194,6 +211,24 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	getObject(w, r, objectKey)
+}
+
+// indexObject returns the object a request path is served from. With an index
+// document, a path ending in a slash gets the document appended, the way a
+// GCS website does. With --spa, a path whose last segment has no dot is a
+// client-side route rather than a file, and gets the index document of the
+// bucket root instead.
+func indexObject(objectKey string) string {
+	if indexDocument == "" {
+		return objectKey
+	}
+	if spa && !strings.Contains(objectKey[strings.LastIndex(objectKey, "/")+1:], ".") {
+		return indexDocument
+	}
+	if objectKey == "" || strings.HasSuffix(objectKey, "/") {
+		return objectKey + indexDocument
+	}
+	return objectKey
 }
 
 func headObject(w http.ResponseWriter, r *http.Request, objectKey string) {

@@ -234,6 +234,59 @@ func TestEmptyKey(t *testing.T) {
 	}
 }
 
+func useIndex(t *testing.T, document string, spaMode bool) {
+	t.Helper()
+	savedDocument, savedSPA := indexDocument, spa
+	indexDocument, spa = document, spaMode
+	t.Cleanup(func() {
+		indexDocument, spa = savedDocument, savedSPA
+	})
+}
+
+func TestIndexObject(t *testing.T) {
+	for _, tc := range []struct {
+		document string
+		spa      bool
+		path     string
+		want     string
+	}{
+		{"", false, "docs/", "docs/"},
+		{"", false, "", ""},
+		{"index.html", false, "", "index.html"},
+		{"index.html", false, "docs/", "docs/index.html"},
+		{"index.html", false, "about", "about"},
+		{"index.html", false, "app.js", "app.js"},
+		{"index.html", true, "", "index.html"},
+		{"index.html", true, "docs/", "index.html"},
+		{"index.html", true, "about", "index.html"},
+		{"index.html", true, "a/b", "index.html"},
+		{"index.html", true, "v1.2/about", "index.html"},
+		{"index.html", true, "app.js", "app.js"},
+		{"index.html", true, "assets/main.js", "assets/main.js"},
+	} {
+		useIndex(t, tc.document, tc.spa)
+		if got := indexObject(tc.path); got != tc.want {
+			t.Errorf("indexObject(%q) with %q, spa %v = %q, want %q", tc.path, tc.document, tc.spa, got, tc.want)
+		}
+	}
+}
+
+func TestIndexDocument(t *testing.T) {
+	f := &fakeGCS{handler: object}
+	useFake(t, f)
+	useIndex(t, "index.html", false)
+
+	serve(http.MethodGet, "/", nil)
+	serve(http.MethodHead, "/docs/", nil)
+
+	if gets := f.sent(http.MethodGet); len(gets) != 1 || gets[0].URL.Path != "/test-bucket/index.html" {
+		t.Errorf("unexpected GET requests: %+v", gets)
+	}
+	if heads := f.sent(http.MethodHead); len(heads) != 1 || heads[0].URL.Path != "/test-bucket/docs/index.html" {
+		t.Errorf("unexpected HEAD requests: %+v", heads)
+	}
+}
+
 func TestPreconditionsSentToGCS(t *testing.T) {
 	date := "Tue, 13 Oct 2026 12:00:00 GMT"
 	tests := []struct {

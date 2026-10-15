@@ -9,6 +9,7 @@ An HTTP server that proxies GET and HEAD requests to Google Cloud Storage bucket
 - Conditional requests (`If-None-Match`, `If-Modified-Since`, `If-Match`, `If-Unmodified-Since`, `If-Range`)
 - Preserves the `Cache-Control`, `Content-Type`, `ETag` and `Last-Modified` headers from GCS
 - Authenticates with Application Default Credentials, or sends anonymous requests to public buckets and emulators
+- Serves an index document for directories or for the routes of a single-page application
 - Returns original HTTP status codes (404, 403, etc.) with generic error messages
 - Access logging for all HTTP requests with timing and status information
 - Configurable via command-line flags or environment variables
@@ -72,6 +73,12 @@ and
 
 # A public bucket, without credentials
 ./gcs-proxy --bucket my-public-bucket --anonymous
+
+# A static site, with index.html for directories
+./gcs-proxy --bucket my-site --index-document index.html
+
+# A single-page application
+./gcs-proxy --bucket my-app --index-document index.html --spa
 ```
 
 ### Environment Variables
@@ -87,13 +94,26 @@ export GCSPROXY_LOGLEVEL=info
 
 ### Command-Line Flags
 
-| Flag          | Environment Variable | Default                          | Description                                    |
-|---------------|----------------------|----------------------------------|------------------------------------------------|
-| `--bucket`    | `GCSPROXY_BUCKET`    | (required)                       | GCS bucket name                                |
-| `--port`      | `GCSPROXY_PORT`      | `8080`                           | HTTP server port                               |
-| `--loglevel`  | `GCSPROXY_LOGLEVEL`  | `info`                           | Log level (debug, info, warn, error)           |
-| `--endpoint`  | `GCSPROXY_ENDPOINT`  | `https://storage.googleapis.com` | GCS XML API endpoint URL, for emulators        |
-| `--anonymous` | `GCSPROXY_ANONYMOUS` | `false`                          | Send requests without credentials              |
+| Flag               | Environment Variable       | Default                          | Description                                                                 |
+|--------------------|----------------------------|----------------------------------|-----------------------------------------------------------------------------|
+| `--bucket`         | `GCSPROXY_BUCKET`          | (required)                       | GCS bucket name                                                             |
+| `--port`           | `GCSPROXY_PORT`            | `8080`                           | HTTP server port                                                            |
+| `--loglevel`       | `GCSPROXY_LOGLEVEL`        | `info`                           | Log level (debug, info, warn, error)                                        |
+| `--endpoint`       | `GCSPROXY_ENDPOINT`        | `https://storage.googleapis.com` | GCS XML API endpoint URL, for emulators                                     |
+| `--anonymous`      | `GCSPROXY_ANONYMOUS`       | `false`                          | Send requests without credentials                                           |
+| `--index-document` | `GCSPROXY_INDEX_DOCUMENT`  | (none)                           | Object served for a path ending in a slash, for example `index.html`        |
+| `--spa`            | `GCSPROXY_SPA`             | `false`                          | Serve the root index document for every path whose last segment has no dot  |
+
+### Static Sites and Single-Page Applications
+
+With `--index-document index.html`, a path ending in a slash is served from
+the index document in that directory: `/` from `index.html`, `/docs/` from
+`docs/index.html`. Other paths are served as they are.
+
+With `--spa` too, every path whose last segment has no dot is a route of the
+application and is served from the `index.html` of the bucket root: `/`,
+`/about` and `/users/42/` all get `index.html`, while `/assets/main.js` is
+served as it is. `--spa` requires `--index-document`.
 
 ## Google Cloud Credentials
 

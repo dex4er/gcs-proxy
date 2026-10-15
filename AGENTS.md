@@ -172,17 +172,19 @@ gcs-proxy/
 Flags are defined with Cobra and bound to Viper, which also reads environment
 variables with the `GCSPROXY_` prefix:
 
-| Flag          | Environment variable | Default                          | Purpose                                |
-|---------------|----------------------|----------------------------------|----------------------------------------|
-| `--bucket`    | `GCSPROXY_BUCKET`    | (required)                       | GCS bucket name                        |
-| `--port`      | `GCSPROXY_PORT`      | `8080`                           | HTTP listen port                       |
-| `--loglevel`  | `GCSPROXY_LOGLEVEL`  | `info`                           | `debug`, `info`, `warn`, `error`       |
-| `--endpoint`  | `GCSPROXY_ENDPOINT`  | `https://storage.googleapis.com` | GCS XML API endpoint URL               |
-| `--anonymous` | `GCSPROXY_ANONYMOUS` | `false`                          | Requests without credentials           |
+| Flag               | Environment variable      | Default                          | Purpose                                      |
+|--------------------|---------------------------|----------------------------------|----------------------------------------------|
+| `--bucket`         | `GCSPROXY_BUCKET`         | (required)                       | GCS bucket name                              |
+| `--port`           | `GCSPROXY_PORT`           | `8080`                           | HTTP listen port                             |
+| `--loglevel`       | `GCSPROXY_LOGLEVEL`       | `info`                           | `debug`, `info`, `warn`, `error`             |
+| `--endpoint`       | `GCSPROXY_ENDPOINT`       | `https://storage.googleapis.com` | GCS XML API endpoint URL                     |
+| `--anonymous`      | `GCSPROXY_ANONYMOUS`      | `false`                          | Requests without credentials                 |
+| `--index-document` | `GCSPROXY_INDEX_DOCUMENT` | (none)                           | Object for a path ending in a slash          |
+| `--spa`            | `GCSPROXY_SPA`            | `false`                          | Root index document for dotless paths        |
 
 A flag name with a dash maps to an underscore in the environment variable
-through the key replacer in `initConfig()`. No flag has one now; the replacer
-is kept so that one added later works, as it does in s3-proxy.
+through the key replacer in `initConfig()`, so `--index-document` is
+`GCSPROXY_INDEX_DOCUMENT`.
 
 Read configuration through `viper.Get*` in `runServer()`, not through the
 flag variables: a value set only in the environment does not reach the flag
@@ -382,6 +384,23 @@ container image be `FROM scratch` with only CA certificates added.
 Clients get the original HTTP status but a fixed message, so bucket names,
 keys and GCS error details are not leaked. The GCS error code and message are
 logged instead.
+
+### Index Documents
+
+These replace the CloudFront Lambda@Edge functions that rewrite SPA routes
+to `index.html`, with deliberately simpler rules, all in `indexObject()`:
+
+- `--index-document` appends the document to a path ending in a slash, `/`
+  included, the way `MainPageSuffix` of a GCS website does. A path without
+  the slash is not tried as a directory: that would cost a second request
+  for every missing object.
+- `--spa` serves the root index document for every path whose last segment
+  has no dot, and leaves the rest alone. There is no exception for an
+  assets prefix: a missing `/assets/x.js` is a 404 anyway, because it has a
+  dot.
+- The rewrite is internal, not a redirect, and happens before anything else,
+  so ranges, conditional requests and HEAD work on the index document as on
+  any object.
 
 ### Health Endpoint
 
