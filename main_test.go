@@ -457,3 +457,88 @@ func TestIfRange(t *testing.T) {
 		})
 	}
 }
+
+func useErrorDocument(t *testing.T, document string) {
+	t.Helper()
+	saved := errorDocument
+	errorDocument = document
+	t.Cleanup(func() {
+		errorDocument = saved
+	})
+}
+
+// withErrorDocument answers for 404.html and leaves every other object
+// missing.
+func withErrorDocument(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/test-bucket/404.html" {
+		gcsErrorHandler(http.StatusNotFound, "NoSuchKey")(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("ETag", testETag)
+	http.ServeContent(w, r, "", testLastModified, strings.NewReader("not here"))
+}
+
+func TestErrorDocument(t *testing.T) {
+	f := &fakeGCS{handler: withErrorDocument}
+	useFake(t, f)
+	useErrorDocument(t, "404.html")
+
+	w := serve(http.MethodGet, "/missing.html", map[string]string{"Range": "bytes=0-1", "If-None-Match": testETag})
+
+	assertResponse(t, w, http.StatusNotFound, "not here", map[string]string{
+		"Content-Type":   "text/html",
+		"Content-Length": "8",
+		"Cache-Control":  "",
+		"ETag":           "",
+	})
+	gets := f.sent(http.MethodGet)
+	if len(gets) != 2 || gets[1].URL.Path != "/test-bucket/404.html" || gets[1].Header.Get("Range") != "" || gets[1].Header.Get("If-None-Match") != "" {
+		t.Errorf("unexpected GET requests: %+v", gets)
+	}
+
+	w = serve(http.MethodHead, "/missing.html", nil)
+
+	assertResponse(t, w, http.StatusNotFound, "", map[string]string{"Content-Type": "text/html", "Content-Length": "8"})
+}
+
+func TestErrorDocumentMissing(t *testing.T) {
+	f := &fakeGCS{handler: gcsErrorHandler(http.StatusNotFound, "NoSuchKey")}
+	useFake(t, f)
+	useErrorDocument(t, "404.html")
+
+	w := serve(http.MethodGet, "/missing.html", nil)
+	assertResponse(t, w, http.StatusNotFound, "The requested resource was not found\n", nil)
+
+	w = serve(http.MethodGet, "/404.html", nil)
+	assertResponse(t, w, http.StatusNotFound, "The requested resource was not found\n", nil)
+
+	if gets := f.sent(http.MethodGet); len(gets) != 3 {
+		t.Errorf("GET requests = %d, want 3", len(gets))
+	}
+}
+
+func TestErrorDocumentNotForOtherErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+		want   int
+	}{
+		{http.StatusNotFound, "NoSuchBucket", http.StatusNotFound},
+		{http.StatusForbidden, "AccessDenied", http.StatusForbidden},
+	} {
+		f := &fakeGCS{handler: gcsErrorHandler(tc.status, tc.code)}
+		useFake(t, f)
+		useErrorDocument(t, "404.html")
+
+		w := serve(http.MethodGet, "/missing.html", nil)
+
+		if w.Code != tc.want {
+			t.Errorf("%s: status = %d, want %d", tc.code, w.Code, tc.want)
+		}
+		if gets := f.sent(http.MethodGet); len(gets) != 1 {
+			t.Errorf("%s: GET requests = %d, want 1", tc.code, len(gets))
+		}
+	}
+}
