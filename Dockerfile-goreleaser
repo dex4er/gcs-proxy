@@ -1,7 +1,7 @@
 # The CA bundle is the same file on every architecture, so this stage runs on
 # the build platform. The final stage only copies files, so no step of the
 # build needs emulation, whatever the target platform is.
-FROM --platform=$BUILDPLATFORM alpine:3.24.2 AS certs
+FROM --platform=$BUILDPLATFORM alpine:3.24.3 AS certs
 
 RUN apk --no-cache add ca-certificates
 
